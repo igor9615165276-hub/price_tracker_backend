@@ -1,6 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, HttpUrl
 from typing import List, Optional
+
+from app.services.parser_ozon import fetch_ozon_product, ParsedProduct
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -33,42 +35,56 @@ class SearchRequest(BaseModel):
     type: str  # "url" или "text"
 
 
+def detect_platform(url: str) -> Optional[str]:
+    if "ozon.ru" in url:
+        return "ozon"
+    if "wildberries.ru" in url:
+        return "wb"
+    return None
+
+
 @router.post("", response_model=SearchResultOut)
 async def search_products(payload: SearchRequest):
-    # ВРЕМЕННЫЙ мок, чтобы Flutter уже работал.
-    # Потом сюда подставишь реальный парсинг WB/Ozon и сравнение.
-    dummy_product = ProductBriefOut(
-        id=1,
-        title="Тестовый товар",
-        image_url=None,
-        attributes={"brand": "Test", "volume_ml": 500},
-    )
+    if payload.type != "url":
+        raise HTTPException(status_code=400, detail="Пока поддерживаем только поиск по ссылке")
 
-    offers = [
-        OfferOut(
-            platform="wb",
-            url="https://www.wildberries.ru/catalog/...",
-            price=1200.0,
-            currency="RUB",
-            delivery_price=0.0,
-            total_price=1200.0,
-            in_stock=True,
-        ),
-        OfferOut(
-            platform="ozon",
-            url="https://www.ozon.ru/product/...",
-            price=1100.0,
-            currency="RUB",
-            delivery_price=149.0,
-            total_price=1249.0,
-            in_stock=True,
-        ),
-    ]
+    platform = detect_platform(payload.query)
+    if platform is None:
+        raise HTTPException(status_code=400, detail="Неизвестная платформа, ожидается Ozon или WB")
+
+    offers: list[OfferOut] = []
+
+    if platform == "ozon":
+        parsed: ParsedProduct = await fetch_ozon_product(payload.query)
+
+        product = ProductBriefOut(
+            id=1,  # временно, потом возьмём из БД
+            title=parsed.title,
+            image_url=parsed.image_url,
+            attributes={},
+        )
+
+        offers.append(
+            OfferOut(
+                platform="ozon",
+                url=parsed.url,
+                price=parsed.price,
+                currency=parsed.currency,
+                delivery_price=0.0,   # пока без доставки
+                total_price=parsed.price,
+                in_stock=True,
+            )
+        )
+
+    # TODO: когда сделаем parser_wb, сюда добавим второй оффер для WB
+
+    if not offers:
+        raise HTTPException(status_code=500, detail="Не удалось получить данные о товаре")
 
     best_platform = min(offers, key=lambda o: o.total_price).platform
 
     return SearchResultOut(
-        product=dummy_product,
+        product=product,
         offers=offers,
         best_offer_platform=best_platform,
     )
