@@ -1,6 +1,7 @@
+from typing import List, Optional
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, HttpUrl
-from typing import List, Optional
 
 from app.services.parser_ozon import fetch_ozon_product, ParsedProduct
 
@@ -31,8 +32,8 @@ class SearchResultOut(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    query: str
-    type: str  # "url" или "text"
+    query: str  # ссылка или текст
+    type: str   # "url" или "text"
 
 
 def detect_platform(url: str) -> Optional[str]:
@@ -55,7 +56,10 @@ async def search_products(payload: SearchRequest):
     offers: list[OfferOut] = []
 
     if platform == "ozon":
-        parsed: ParsedProduct = await fetch_ozon_product(payload.query)
+        try:
+            parsed: ParsedProduct = await fetch_ozon_product(payload.query)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Ошибка при запросе Ozon: {e}")
 
         product = ProductBriefOut(
             id=1,  # временно, потом возьмём из БД
@@ -70,13 +74,13 @@ async def search_products(payload: SearchRequest):
                 url=parsed.url,
                 price=parsed.price,
                 currency=parsed.currency,
-                delivery_price=0.0,   # пока без доставки
+                delivery_price=0.0,  # пока без доставки
                 total_price=parsed.price,
                 in_stock=True,
             )
         )
 
-    # TODO: когда сделаем parser_wb, сюда добавим второй оффер для WB
+    # здесь позже добавим обработку WB и сравнение
 
     if not offers:
         raise HTTPException(status_code=500, detail="Не удалось получить данные о товаре")
